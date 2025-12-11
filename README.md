@@ -1,1 +1,1 @@
-Essa bomba ai foi feita com nocode 
+# Essa bomba ai foi feita com vibe code
