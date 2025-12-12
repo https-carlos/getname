@@ -1,4 +1,4 @@
-require('dotenv').config(); // Carrega .env
+require('dotenv').config();
 
 const express = require('express');
 const cors = require('cors');
@@ -7,7 +7,6 @@ const { Client } = require('pg');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Configurações
 app.use(express.json());
 app.use(cors());
 
@@ -21,19 +20,18 @@ const client = new Client({
     ssl: { rejectUnauthorized: false }
 });
 
-// Conecta ao banco ao iniciar
 client.connect()
     .then(() => console.log("🔥 Conectado ao PostgreSQL!"))
     .catch(err => console.error("❌ Erro ao conectar no banco:", err));
 
 
-// Rota 1: Página inicial simples
+// --- ROTA INICIAL ---
 app.get('/', (req, res) => {
     res.send('Servidor do Gatinho está ON! 🐱');
 });
 
 
-// Rota 2: Recebe nome e salva no banco
+// --- ROTA 2: RECEBER NOME E SALVAR/ATUALIZAR ---
 app.post('/receber-nome', async (req, res) => {
     const { nome } = req.body;
 
@@ -42,17 +40,46 @@ app.post('/receber-nome', async (req, res) => {
     }
 
     try {
-        const query = `
-            INSERT INTO tabela_logs (nome, data_registro)
-            VALUES ($1, NOW())
-            RETURNING *;
-        `;
+        // Hora do Brasil
+        const horaBrasil = new Date(new Date().toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" }));
 
-        await client.query(query, [nome]);
+        // Verifica se o nome já existe
+        const busca = await client.query(
+            `SELECT * FROM tabela_logs WHERE nome = $1`,
+            [nome]
+        );
 
-        console.log(`🐱 [NOVO ALUNO] ${nome}`);
+        if (busca.rows.length > 0) {
+            // Já existe → UPDATE
+            const pessoa = busca.rows[0];
+            const novoTotal = pessoa.vezes_clicou + 1;
 
-        return res.json({ status: 'Sucesso', mensagem: 'Nome salvo no banco!' });
+            await client.query(
+                `UPDATE tabela_logs
+                 SET vezes_clicou = $1,
+                     ultima_vez = $2
+                 WHERE nome = $3`,
+                [novoTotal, horaBrasil, nome]
+            );
+
+            console.log(`🔄 [UPDATE] ${nome} clicou novamente (${novoTotal}x)`);
+
+            return res.json({
+                status: 'Atualizado',
+                mensagem: 'Clique registrado (já existia no banco)'
+            });
+        }
+
+        // Não existe → INSERT
+        await client.query(
+            `INSERT INTO tabela_logs (nome, data_registro, ultima_vez, vezes_clicou)
+             VALUES ($1, $2, $2, 1)`,
+            [nome, horaBrasil]
+        );
+
+        console.log(`🐱 [NOVO REGISTRO] ${nome}`);
+
+        return res.json({ status: 'Criado', mensagem: 'Novo nome salvo no banco!' });
 
     } catch (err) {
         console.error("❌ Erro ao salvar:", err);
@@ -61,11 +88,11 @@ app.post('/receber-nome', async (req, res) => {
 });
 
 
-// Rota 3: Página secreta que lista nomes do banco
+// --- ROTA 3: LISTAR ---
 app.get('/clicounolink', async (req, res) => {
     try {
         const busca = await client.query(`
-            SELECT nome, data_registro 
+            SELECT nome, data_registro, ultima_vez, vezes_clicou
             FROM tabela_logs
             ORDER BY id DESC;
         `);
@@ -74,10 +101,21 @@ app.get('/clicounolink', async (req, res) => {
 
         const itensDaLista = lista.map(item => `
             <li style="padding: 10px; border-bottom: 1px solid #ddd;">
+                
+                <strong>${item.nome}</strong><br>
+
                 <span style="color: #666; font-size: 0.8em;">
-                    ${new Date(item.data_registro).toLocaleString('pt-BR')}
+                    Primeira vez: ${new Date(item.data_registro).toLocaleString('pt-BR')}
                 </span><br>
-                <strong>${item.nome}</strong>
+
+                <span style="color: #666; font-size: 0.8em;">
+                    Última vez: ${new Date(item.ultima_vez).toLocaleString('pt-BR')}
+                </span><br>
+
+                <span style="color: #333;">
+                    Clicou <strong>${item.vezes_clicou}</strong> vezes
+                </span>
+
             </li>
         `).join('');
 
@@ -99,7 +137,7 @@ app.get('/clicounolink', async (req, res) => {
             <body>
                 <div class="container">
                     <h1>🐱 Nomes Recebidos</h1>
-                    <div class="contador">Total capturado: ${lista.length}</div>
+                    <div class="contador">Total: ${lista.length}</div>
                     <ul>
                         ${lista.length > 0 ? itensDaLista : '<p style="text-align:center">Nenhum nome recebido ainda...</p>'}
                     </ul>
@@ -120,7 +158,7 @@ app.get('/clicounolink', async (req, res) => {
 });
 
 
-// Inicia o servidor
+// --- INICIAR SERVIDOR ---
 app.listen(PORT, () => {
     console.log(`🚀 Servidor rodando na porta ${PORT}`);
     console.log(`🔗 Página secreta: http://localhost:${PORT}/clicounolink`);
